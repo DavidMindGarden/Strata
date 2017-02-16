@@ -359,10 +359,10 @@ public final class CurveGroupDefinition
         FunctionalCurveDefinition casted = (FunctionalCurveDefinition) defn;
         result.addAll(casted.getInitialGuess().toList().iterator());
       } else {
-      ValueType valueType = defn.getYValueType();
-      for (CurveNode node : defn.getNodes()) {
-        result.add(node.initialGuess(marketData, valueType));
-      }
+        ValueType valueType = defn.getYValueType();
+        for (CurveNode node : defn.getNodes()) {
+          result.add(node.initialGuess(marketData, valueType));
+        }
       }
     }
     // TODO add initial guess for other definition - must be computed in function??

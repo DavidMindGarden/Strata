@@ -35,6 +35,9 @@ import com.opengamma.strata.collect.tuple.Pair;
 import com.opengamma.strata.market.ValueType;
 import com.opengamma.strata.market.param.DatedParameterMetadata;
 
+/**
+ * TODO javadoc
+ */
 @BeanDefinition
 public final class FunctionalCurveDefinition
     implements CurveDefinition, ImmutableBean, Serializable {
