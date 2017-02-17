@@ -321,7 +321,7 @@ public final class CurveGroupDefinition
    * @return the number of parameters
    */
   public int getTotalParameterCount() {
-    return curveDefinitionsByName.entrySet().stream().mapToInt(entry -> entry.getValue().getParameterCount()).sum();
+    return curveDefinitionsByName.entrySet().stream().mapToInt(entry -> entry.getValue().getParameterCount()).sum(); 
   }
 
   /**
@@ -355,8 +355,8 @@ public final class CurveGroupDefinition
   public ImmutableList<Double> initialGuesses(MarketData marketData) {
     ImmutableList.Builder<Double> result = ImmutableList.builder();
     for (CurveDefinition defn : curveDefinitions) {
-      if (defn instanceof FunctionalCurveDefinition) {
-        FunctionalCurveDefinition casted = (FunctionalCurveDefinition) defn;
+      if (defn instanceof ParameterizedFunctionalCurveDefinition) {
+        ParameterizedFunctionalCurveDefinition casted = (ParameterizedFunctionalCurveDefinition) defn;  
         result.addAll(casted.getInitialGuess().toList().iterator());
       } else {
         ValueType valueType = defn.getYValueType();
@@ -365,7 +365,6 @@ public final class CurveGroupDefinition
         }
       }
     }
-    // TODO add initial guess for other definition - must be computed in function??
     return result.build();
   }
 

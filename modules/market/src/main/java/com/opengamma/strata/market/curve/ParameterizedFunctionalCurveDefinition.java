@@ -18,10 +18,12 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.stream.IntStream;
 
 import org.joda.beans.Bean;
 import org.joda.beans.BeanDefinition;
 import org.joda.beans.ImmutableBean;
+import org.joda.beans.ImmutablePreBuild;
 import org.joda.beans.JodaBeanUtils;
 import org.joda.beans.MetaProperty;
 import org.joda.beans.Property;
@@ -34,17 +36,23 @@ import org.joda.beans.impl.direct.DirectMetaPropertyMap;
 import com.google.common.collect.ImmutableList;
 import com.opengamma.strata.basics.ReferenceData;
 import com.opengamma.strata.basics.date.DayCount;
+import com.opengamma.strata.collect.Guavate;
 import com.opengamma.strata.collect.Messages;
 import com.opengamma.strata.collect.array.DoubleArray;
 import com.opengamma.strata.collect.tuple.Pair;
 import com.opengamma.strata.market.ValueType;
-import com.opengamma.strata.market.param.DatedParameterMetadata;
+import com.opengamma.strata.market.param.ParameterMetadata;
 
 /**
- * TODO javadoc
+ * Provides the definition of how to calibrate a parameterized functional curve.
+ * <p>
+ * A parameterized functional curve is built from a number of parameters and described by metadata.
+ * Calibration is based on a list of {@link CurveNode} instances that specify the underlying instruments.
+ * <p>
+ * The number of the curve parameters is in general different from the number of the instruments.
  */
 @BeanDefinition
-public final class FunctionalCurveDefinition
+public final class ParameterizedFunctionalCurveDefinition
     implements CurveDefinition, ImmutableBean, Serializable {
 
   /**
@@ -81,29 +89,62 @@ public final class FunctionalCurveDefinition
   @PropertyDefinition(get = "optional")
   private final DayCount dayCount;
   /**
-   * The nodes in the curve.
+   * The nodes of the underlying instruments.
    * <p>
-   * The nodes are used to find the par rates and calibrate the curve.
-   * There must be at least two nodes in the curve.
+   * The nodes are used to find the quoted values to which the curve is calibrated.
    */
   @PropertyDefinition(validate = "notNull", builderType = "List<? extends CurveNode>", overrideGet = true)
   private final ImmutableList<CurveNode> nodes;
-
+  /**
+   * The initial guess values for the curve parameters.
+   */
   @PropertyDefinition(validate = "notNull")
   private final DoubleArray initialGuess;
-
+  /**
+   * The parameter metadata of the curve, defaulted to empty metadata instances.
+   * <p>
+   * The size of the list must be the same as the number of the curve parameter.
+   */
+  @PropertyDefinition(validate = "notNull", builderType = "List<? extends ParameterMetadata>")
+  private final ImmutableList<ParameterMetadata> parameterMetadata;
+  /**
+   * The y-value function.
+   * <p>
+   * The function takes {@code parameters} and x-value, then returns y-value.
+   */
   @PropertyDefinition(validate = "notNull")
   private final BiFunction<DoubleArray, Double, Double> valueFunction;
-
+  /**
+   * The derivative function.
+   * <p>
+   * The function takes {@code parameters} and x-value, then returns the first derivative of y-value with respective to x, 
+   * i.e., the gradient of the curve.
+   */
   @PropertyDefinition(validate = "notNull")
   private final BiFunction<DoubleArray, Double, Double> derivativeFunction;
-
+  /**
+   * The parameter sensitivity function.
+   * <p>
+   * The function takes {@code parameters} and x-value, then returns the sensitivities of y-value to the parameters.
+   */
   @PropertyDefinition(validate = "notNull")
   private final BiFunction<DoubleArray, Double, DoubleArray> sensitivityFunction;
 
   //-------------------------------------------------------------------------
+  @ImmutablePreBuild
+  private static void preBuild(Builder builder) {
+    if (builder.parameterMetadata.size() == 0) {
+      if (builder.initialGuess != null) {
+        builder.parameterMetadata = IntStream.range(0, builder.initialGuess.size())
+            .mapToObj(n -> ParameterMetadata.empty())
+            .collect(Guavate.toImmutableList());
+      }
+    }
+  }
+
+  //-------------------------------------------------------------------------
   @Override
-  public FunctionalCurveDefinition filtered(LocalDate valuationDate, ReferenceData refData) {
+  public ParameterizedFunctionalCurveDefinition filtered(LocalDate valuationDate, ReferenceData refData) { 
     // mutable list of date-node pairs
     ArrayList<Pair<LocalDate, CurveNode>> nodeDates = nodes.stream()
         .map(node -> Pair.of(node.date(valuationDate, refData), node))
@@ -181,13 +222,14 @@ public final class FunctionalCurveDefinition
     }
     // return the resolved definition
     List<CurveNode> filteredNodes = nodeDates.stream().map(p -> p.getSecond()).collect(toImmutableList());
-    return new FunctionalCurveDefinition(
+    return new ParameterizedFunctionalCurveDefinition(
         name,
         xValueType,
         yValueType,
         dayCount,
         filteredNodes,
         initialGuess,
+        parameterMetadata,
         valueFunction,
         derivativeFunction,
         sensitivityFunction);
@@ -195,15 +237,12 @@ public final class FunctionalCurveDefinition
 
   @Override
   public CurveMetadata metadata(LocalDate valuationDate, ReferenceData refData) {
-    List<DatedParameterMetadata> nodeMetadata = nodes.stream()
-        .map(node -> node.metadata(valuationDate, refData))
-        .collect(toImmutableList());
     return DefaultCurveMetadata.builder()
         .curveName(name)
         .xValueType(xValueType)
         .yValueType(yValueType)
         .dayCount(dayCount)
-        .parameterMetadata(nodeMetadata)
+        .parameterMetadata(parameterMetadata)
         .build();
   }
 
@@ -217,19 +256,6 @@ public final class FunctionalCurveDefinition
         sensitivityFunction);
   }
 
-  // builds node times from node dates
-  private DoubleArray buildNodeTimes(LocalDate valuationDate, CurveMetadata metadata) {
-    if (metadata.getXValueType().equals(ValueType.YEAR_FRACTION)) {
-      return DoubleArray.of(getParameterCount(), i -> {
-        LocalDate nodeDate = ((DatedParameterMetadata) metadata.getParameterMetadata().get().get(i)).getDate();
-        return getDayCount().get().yearFraction(valuationDate, nodeDate);
-      });
-
-    } else {
-      throw new IllegalArgumentException("Metadata XValueType should be YearFraction in curve definition");
-    }
-  }
-
   @Override
   public int getParameterCount() {
     return initialGuess.size();
@@ -238,15 +264,15 @@ public final class FunctionalCurveDefinition
   //------------------------- AUTOGENERATED START -------------------------
   ///CLOVER:OFF
   /**
-   * The meta-bean for {@code FunctionalCurveDefinition}.
+   * The meta-bean for {@code ParameterizedFunctionalCurveDefinition}.
    * @return the meta-bean, not null
    */
-  public static FunctionalCurveDefinition.Meta meta() {
-    return FunctionalCurveDefinition.Meta.INSTANCE;
+  public static ParameterizedFunctionalCurveDefinition.Meta meta() {
+    return ParameterizedFunctionalCurveDefinition.Meta.INSTANCE;
   }
 
   static {
-    JodaBeanUtils.registerMetaBean(FunctionalCurveDefinition.Meta.INSTANCE);
+    JodaBeanUtils.registerMetaBean(ParameterizedFunctionalCurveDefinition.Meta.INSTANCE);
   }
 
   /**
@@ -258,17 +284,18 @@ public final class FunctionalCurveDefinition
    * Returns a builder used to create an instance of the bean.
    * @return the builder, not null
    */
-  public static FunctionalCurveDefinition.Builder builder() {
-    return new FunctionalCurveDefinition.Builder();
+  public static ParameterizedFunctionalCurveDefinition.Builder builder() {
+    return new ParameterizedFunctionalCurveDefinition.Builder();
   }
 
-  private FunctionalCurveDefinition(
+  private ParameterizedFunctionalCurveDefinition(
       CurveName name,
       ValueType xValueType,
       ValueType yValueType,
       DayCount dayCount,
       List<? extends CurveNode> nodes,
       DoubleArray initialGuess,
+      List<? extends ParameterMetadata> parameterMetadata,
       BiFunction<DoubleArray, Double, Double> valueFunction,
       BiFunction<DoubleArray, Double, Double> derivativeFunction,
       BiFunction<DoubleArray, Double, DoubleArray> sensitivityFunction) {
@@ -277,6 +304,7 @@ public final class FunctionalCurveDefinition
     JodaBeanUtils.notNull(yValueType, "yValueType");
     JodaBeanUtils.notNull(nodes, "nodes");
     JodaBeanUtils.notNull(initialGuess, "initialGuess");
+    JodaBeanUtils.notNull(parameterMetadata, "parameterMetadata");
     JodaBeanUtils.notNull(valueFunction, "valueFunction");
     JodaBeanUtils.notNull(derivativeFunction, "derivativeFunction");
     JodaBeanUtils.notNull(sensitivityFunction, "sensitivityFunction");
@@ -286,14 +314,15 @@ public final class FunctionalCurveDefinition
     this.dayCount = dayCount;
     this.nodes = ImmutableList.copyOf(nodes);
     this.initialGuess = initialGuess;
+    this.parameterMetadata = ImmutableList.copyOf(parameterMetadata);
     this.valueFunction = valueFunction;
     this.derivativeFunction = derivativeFunction;
     this.sensitivityFunction = sensitivityFunction;
   }
 
   @Override
-  public FunctionalCurveDefinition.Meta metaBean() {
-    return FunctionalCurveDefinition.Meta.INSTANCE;
+  public ParameterizedFunctionalCurveDefinition.Meta metaBean() {
+    return ParameterizedFunctionalCurveDefinition.Meta.INSTANCE;
   }
 
   @Override
@@ -359,10 +388,9 @@ public final class FunctionalCurveDefinition
 
   //-----------------------------------------------------------------------
   /**
-   * Gets the nodes in the curve.
+   * Gets the nodes of the underlying instruments.
    * <p>
-   * The nodes are used to find the par rates and calibrate the curve.
-   * There must be at least two nodes in the curve.
+   * The nodes are used to find the quoted values to which the curve is calibrated.
    * @return the value of the property, not null
    */
   @Override
@@ -372,7 +400,7 @@ public final class FunctionalCurveDefinition
 
   //-----------------------------------------------------------------------
   /**
-   * Gets the initialGuess.
+   * Gets the initial guess values for the curve parameters.
    * @return the value of the property, not null
    */
   public DoubleArray getInitialGuess() {
@@ -381,7 +409,20 @@ public final class FunctionalCurveDefinition
 
   //-----------------------------------------------------------------------
   /**
-   * Gets the valueFunction.
+   * Gets the parameter metadata of the curve, defaulted to empty metadata instances.
+   * <p>
+   * The size of the list must be the same as the number of the curve parameter.
+   * @return the value of the property, not null
+   */
+  public ImmutableList<ParameterMetadata> getParameterMetadata() {
+    return parameterMetadata;
+  }
+
+  //-----------------------------------------------------------------------
+  /**
+   * Gets the y-value function.
+   * <p>
+   * The function takes {@code parameters} and x-value, then returns y-value.
    * @return the value of the property, not null
    */
   public BiFunction<DoubleArray, Double, Double> getValueFunction() {
@@ -390,7 +431,10 @@ public final class FunctionalCurveDefinition
 
   //-----------------------------------------------------------------------
   /**
-   * Gets the derivativeFunction.
+   * Gets the derivative function.
+   * <p>
+   * The function takes {@code parameters} and x-value, then returns the first derivative of y-value with respective to x,
+   * i.e., the gradient of the curve.
    * @return the value of the property, not null
    */
   public BiFunction<DoubleArray, Double, Double> getDerivativeFunction() {
@@ -399,7 +443,9 @@ public final class FunctionalCurveDefinition
 
   //-----------------------------------------------------------------------
   /**
-   * Gets the sensitivityFunction.
+   * Gets the parameter sensitivity function.
+   * <p>
+   * The function takes {@code parameters} and x-value, then returns the sensitivities of y-value to the parameters.
    * @return the value of the property, not null
    */
   public BiFunction<DoubleArray, Double, DoubleArray> getSensitivityFunction() {
@@ -421,13 +467,14 @@ public final class FunctionalCurveDefinition
       return true;
     }
     if (obj != null && obj.getClass() == this.getClass()) {
-      FunctionalCurveDefinition other = (FunctionalCurveDefinition) obj;
+      ParameterizedFunctionalCurveDefinition other = (ParameterizedFunctionalCurveDefinition) obj;
       return JodaBeanUtils.equal(name, other.name) &&
           JodaBeanUtils.equal(xValueType, other.xValueType) &&
           JodaBeanUtils.equal(yValueType, other.yValueType) &&
           JodaBeanUtils.equal(dayCount, other.dayCount) &&
           JodaBeanUtils.equal(nodes, other.nodes) &&
           JodaBeanUtils.equal(initialGuess, other.initialGuess) &&
+          JodaBeanUtils.equal(parameterMetadata, other.parameterMetadata) &&
           JodaBeanUtils.equal(valueFunction, other.valueFunction) &&
           JodaBeanUtils.equal(derivativeFunction, other.derivativeFunction) &&
           JodaBeanUtils.equal(sensitivityFunction, other.sensitivityFunction);
@@ -444,6 +491,7 @@ public final class FunctionalCurveDefinition
     hash = hash * 31 + JodaBeanUtils.hashCode(dayCount);
     hash = hash * 31 + JodaBeanUtils.hashCode(nodes);
     hash = hash * 31 + JodaBeanUtils.hashCode(initialGuess);
+    hash = hash * 31 + JodaBeanUtils.hashCode(parameterMetadata);
     hash = hash * 31 + JodaBeanUtils.hashCode(valueFunction);
     hash = hash * 31 + JodaBeanUtils.hashCode(derivativeFunction);
     hash = hash * 31 + JodaBeanUtils.hashCode(sensitivityFunction);
@@ -452,14 +500,15 @@ public final class FunctionalCurveDefinition
 
   @Override
   public String toString() {
-    StringBuilder buf = new StringBuilder(320);
-    buf.append("FunctionalCurveDefinition{");
+    StringBuilder buf = new StringBuilder(352);
+    buf.append("ParameterizedFunctionalCurveDefinition{");
     buf.append("name").append('=').append(name).append(',').append(' ');
     buf.append("xValueType").append('=').append(xValueType).append(',').append(' ');
     buf.append("yValueType").append('=').append(yValueType).append(',').append(' ');
     buf.append("dayCount").append('=').append(dayCount).append(',').append(' ');
     buf.append("nodes").append('=').append(nodes).append(',').append(' ');
     buf.append("initialGuess").append('=').append(initialGuess).append(',').append(' ');
+    buf.append("parameterMetadata").append('=').append(parameterMetadata).append(',').append(' ');
     buf.append("valueFunction").append('=').append(valueFunction).append(',').append(' ');
     buf.append("derivativeFunction").append('=').append(derivativeFunction).append(',').append(' ');
     buf.append("sensitivityFunction").append('=').append(JodaBeanUtils.toString(sensitivityFunction));
@@ -469,7 +518,7 @@ public final class FunctionalCurveDefinition
 
   //-----------------------------------------------------------------------
   /**
-   * The meta-bean for {@code FunctionalCurveDefinition}.
+   * The meta-bean for {@code ParameterizedFunctionalCurveDefinition}.
    */
   public static final class Meta extends DirectMetaBean {
     /**
@@ -481,51 +530,57 @@ public final class FunctionalCurveDefinition
      * The meta-property for the {@code name} property.
      */
     private final MetaProperty<CurveName> name = DirectMetaProperty.ofImmutable(
-        this, "name", FunctionalCurveDefinition.class, CurveName.class);
+        this, "name", ParameterizedFunctionalCurveDefinition.class, CurveName.class);
     /**
      * The meta-property for the {@code xValueType} property.
      */
     private final MetaProperty<ValueType> xValueType = DirectMetaProperty.ofImmutable(
-        this, "xValueType", FunctionalCurveDefinition.class, ValueType.class);
+        this, "xValueType", ParameterizedFunctionalCurveDefinition.class, ValueType.class);
     /**
      * The meta-property for the {@code yValueType} property.
      */
     private final MetaProperty<ValueType> yValueType = DirectMetaProperty.ofImmutable(
-        this, "yValueType", FunctionalCurveDefinition.class, ValueType.class);
+        this, "yValueType", ParameterizedFunctionalCurveDefinition.class, ValueType.class);
     /**
      * The meta-property for the {@code dayCount} property.
      */
     private final MetaProperty<DayCount> dayCount = DirectMetaProperty.ofImmutable(
-        this, "dayCount", FunctionalCurveDefinition.class, DayCount.class);
+        this, "dayCount", ParameterizedFunctionalCurveDefinition.class, DayCount.class);
     /**
      * The meta-property for the {@code nodes} property.
      */
     @SuppressWarnings({"unchecked", "rawtypes" })
     private final MetaProperty<ImmutableList<CurveNode>> nodes = DirectMetaProperty.ofImmutable(
-        this, "nodes", FunctionalCurveDefinition.class, (Class) ImmutableList.class);
+        this, "nodes", ParameterizedFunctionalCurveDefinition.class, (Class) ImmutableList.class);
     /**
      * The meta-property for the {@code initialGuess} property.
      */
     private final MetaProperty<DoubleArray> initialGuess = DirectMetaProperty.ofImmutable(
-        this, "initialGuess", FunctionalCurveDefinition.class, DoubleArray.class);
+        this, "initialGuess", ParameterizedFunctionalCurveDefinition.class, DoubleArray.class);
+    /**
+     * The meta-property for the {@code parameterMetadata} property.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes" })
+    private final MetaProperty<ImmutableList<ParameterMetadata>> parameterMetadata = DirectMetaProperty.ofImmutable(
+        this, "parameterMetadata", ParameterizedFunctionalCurveDefinition.class, (Class) ImmutableList.class);
     /**
      * The meta-property for the {@code valueFunction} property.
      */
     @SuppressWarnings({"unchecked", "rawtypes" })
     private final MetaProperty<BiFunction<DoubleArray, Double, Double>> valueFunction = DirectMetaProperty.ofImmutable(
-        this, "valueFunction", FunctionalCurveDefinition.class, (Class) BiFunction.class);
+        this, "valueFunction", ParameterizedFunctionalCurveDefinition.class, (Class) BiFunction.class);
     /**
      * The meta-property for the {@code derivativeFunction} property.
      */
     @SuppressWarnings({"unchecked", "rawtypes" })
     private final MetaProperty<BiFunction<DoubleArray, Double, Double>> derivativeFunction = DirectMetaProperty.ofImmutable(
-        this, "derivativeFunction", FunctionalCurveDefinition.class, (Class) BiFunction.class);
+        this, "derivativeFunction", ParameterizedFunctionalCurveDefinition.class, (Class) BiFunction.class);
     /**
      * The meta-property for the {@code sensitivityFunction} property.
      */
     @SuppressWarnings({"unchecked", "rawtypes" })
     private final MetaProperty<BiFunction<DoubleArray, Double, DoubleArray>> sensitivityFunction = DirectMetaProperty.ofImmutable(
-        this, "sensitivityFunction", FunctionalCurveDefinition.class, (Class) BiFunction.class);
+        this, "sensitivityFunction", ParameterizedFunctionalCurveDefinition.class, (Class) BiFunction.class);
     /**
      * The meta-properties.
      */
@@ -537,6 +592,7 @@ public final class FunctionalCurveDefinition
         "dayCount",
         "nodes",
         "initialGuess",
+        "parameterMetadata",
         "valueFunction",
         "derivativeFunction",
         "sensitivityFunction");
@@ -562,6 +618,8 @@ public final class FunctionalCurveDefinition
           return nodes;
         case -431632141:  // initialGuess
           return initialGuess;
+        case -1169106440:  // parameterMetadata
+          return parameterMetadata;
         case 636119145:  // valueFunction
           return valueFunction;
         case 1663351423:  // derivativeFunction
@@ -573,13 +631,13 @@ public final class FunctionalCurveDefinition
     }
 
     @Override
-    public FunctionalCurveDefinition.Builder builder() {
-      return new FunctionalCurveDefinition.Builder();
+    public ParameterizedFunctionalCurveDefinition.Builder builder() {
+      return new ParameterizedFunctionalCurveDefinition.Builder();
     }
 
     @Override
-    public Class<? extends FunctionalCurveDefinition> beanType() {
-      return FunctionalCurveDefinition.class;
+    public Class<? extends ParameterizedFunctionalCurveDefinition> beanType() {
+      return ParameterizedFunctionalCurveDefinition.class;
     }
 
     @Override
@@ -637,6 +695,14 @@ public final class FunctionalCurveDefinition
     }
 
     /**
+     * The meta-property for the {@code parameterMetadata} property.
+     * @return the meta-property, not null
+     */
+    public MetaProperty<ImmutableList<ParameterMetadata>> parameterMetadata() {
+      return parameterMetadata;
+    }
+
+    /**
      * The meta-property for the {@code valueFunction} property.
      * @return the meta-property, not null
      */
@@ -665,23 +731,25 @@ public final class FunctionalCurveDefinition
     protected Object propertyGet(Bean bean, String propertyName, boolean quiet) {
       switch (propertyName.hashCode()) {
         case 3373707:  // name
-          return ((FunctionalCurveDefinition) bean).getName();
+          return ((ParameterizedFunctionalCurveDefinition) bean).getName();
         case -868509005:  // xValueType
-          return ((FunctionalCurveDefinition) bean).getXValueType();
+          return ((ParameterizedFunctionalCurveDefinition) bean).getXValueType();
         case -1065022510:  // yValueType
-          return ((FunctionalCurveDefinition) bean).getYValueType();
+          return ((ParameterizedFunctionalCurveDefinition) bean).getYValueType();
         case 1905311443:  // dayCount
-          return ((FunctionalCurveDefinition) bean).dayCount;
+          return ((ParameterizedFunctionalCurveDefinition) bean).dayCount;
         case 104993457:  // nodes
-          return ((FunctionalCurveDefinition) bean).getNodes();
+          return ((ParameterizedFunctionalCurveDefinition) bean).getNodes();
         case -431632141:  // initialGuess
-          return ((FunctionalCurveDefinition) bean).getInitialGuess();
+          return ((ParameterizedFunctionalCurveDefinition) bean).getInitialGuess();
+        case -1169106440:  // parameterMetadata
+          return ((ParameterizedFunctionalCurveDefinition) bean).getParameterMetadata();
         case 636119145:  // valueFunction
-          return ((FunctionalCurveDefinition) bean).getValueFunction();
+          return ((ParameterizedFunctionalCurveDefinition) bean).getValueFunction();
         case 1663351423:  // derivativeFunction
-          return ((FunctionalCurveDefinition) bean).getDerivativeFunction();
+          return ((ParameterizedFunctionalCurveDefinition) bean).getDerivativeFunction();
         case -1353652329:  // sensitivityFunction
-          return ((FunctionalCurveDefinition) bean).getSensitivityFunction();
+          return ((ParameterizedFunctionalCurveDefinition) bean).getSensitivityFunction();
       }
       return super.propertyGet(bean, propertyName, quiet);
     }
@@ -699,9 +767,9 @@ public final class FunctionalCurveDefinition
 
   //-----------------------------------------------------------------------
   /**
-   * The bean-builder for {@code FunctionalCurveDefinition}.
+   * The bean-builder for {@code ParameterizedFunctionalCurveDefinition}.
    */
-  public static final class Builder extends DirectFieldsBeanBuilder<FunctionalCurveDefinition> {
+  public static final class Builder extends DirectFieldsBeanBuilder<ParameterizedFunctionalCurveDefinition> {
 
     private CurveName name;
     private ValueType xValueType;
@@ -709,6 +777,7 @@ public final class FunctionalCurveDefinition
     private DayCount dayCount;
     private List<? extends CurveNode> nodes = ImmutableList.of();
     private DoubleArray initialGuess;
+    private List<? extends ParameterMetadata> parameterMetadata = ImmutableList.of();
     private BiFunction<DoubleArray, Double, Double> valueFunction;
     private BiFunction<DoubleArray, Double, Double> derivativeFunction;
     private BiFunction<DoubleArray, Double, DoubleArray> sensitivityFunction;
@@ -723,13 +792,14 @@ public final class FunctionalCurveDefinition
      * Restricted copy constructor.
      * @param beanToCopy  the bean to copy from, not null
      */
-    private Builder(FunctionalCurveDefinition beanToCopy) {
+    private Builder(ParameterizedFunctionalCurveDefinition beanToCopy) {
       this.name = beanToCopy.getName();
       this.xValueType = beanToCopy.getXValueType();
       this.yValueType = beanToCopy.getYValueType();
       this.dayCount = beanToCopy.dayCount;
       this.nodes = beanToCopy.getNodes();
       this.initialGuess = beanToCopy.getInitialGuess();
+      this.parameterMetadata = beanToCopy.getParameterMetadata();
       this.valueFunction = beanToCopy.getValueFunction();
       this.derivativeFunction = beanToCopy.getDerivativeFunction();
       this.sensitivityFunction = beanToCopy.getSensitivityFunction();
@@ -751,6 +821,8 @@ public final class FunctionalCurveDefinition
           return nodes;
         case -431632141:  // initialGuess
           return initialGuess;
+        case -1169106440:  // parameterMetadata
+          return parameterMetadata;
         case 636119145:  // valueFunction
           return valueFunction;
         case 1663351423:  // derivativeFunction
@@ -783,6 +855,9 @@ public final class FunctionalCurveDefinition
           break;
         case -431632141:  // initialGuess
           this.initialGuess = (DoubleArray) newValue;
+          break;
+        case -1169106440:  // parameterMetadata
+          this.parameterMetadata = (List<? extends ParameterMetadata>) newValue;
           break;
         case 636119145:  // valueFunction
           this.valueFunction = (BiFunction<DoubleArray, Double, Double>) newValue;
@@ -824,14 +899,16 @@ public final class FunctionalCurveDefinition
     }
 
     @Override
-    public FunctionalCurveDefinition build() {
-      return new FunctionalCurveDefinition(
+    public ParameterizedFunctionalCurveDefinition build() {
+      preBuild(this);
+      return new ParameterizedFunctionalCurveDefinition(
           name,
           xValueType,
           yValueType,
           dayCount,
           nodes,
           initialGuess,
+          parameterMetadata,
           valueFunction,
           derivativeFunction,
           sensitivityFunction);
@@ -895,10 +972,9 @@ public final class FunctionalCurveDefinition
     }
 
     /**
-     * Sets the nodes in the curve.
+     * Sets the nodes of the underlying instruments.
      * <p>
-     * The nodes are used to find the par rates and calibrate the curve.
-     * There must be at least two nodes in the curve.
+     * The nodes are used to find the quoted values to which the curve is calibrated.
      * @param nodes  the new value, not null
      * @return this, for chaining, not null
      */
@@ -919,7 +995,7 @@ public final class FunctionalCurveDefinition
     }
 
     /**
-     * Sets the initialGuess.
+     * Sets the initial guess values for the curve parameters.
      * @param initialGuess  the new value, not null
      * @return this, for chaining, not null
      */
@@ -930,7 +1006,32 @@ public final class FunctionalCurveDefinition
     }
 
     /**
-     * Sets the valueFunction.
+     * Sets the parameter metadata of the curve, defaulted to empty metadata instances.
+     * <p>
+     * The size of the list must be the same as the number of the curve parameter.
+     * @param parameterMetadata  the new value, not null
+     * @return this, for chaining, not null
+     */
+    public Builder parameterMetadata(List<? extends ParameterMetadata> parameterMetadata) {
+      JodaBeanUtils.notNull(parameterMetadata, "parameterMetadata");
+      this.parameterMetadata = parameterMetadata;
+      return this;
+    }
+
+    /**
+     * Sets the {@code parameterMetadata} property in the builder
+     * from an array of objects.
+     * @param parameterMetadata  the new value, not null
+     * @return this, for chaining, not null
+     */
+    public Builder parameterMetadata(ParameterMetadata... parameterMetadata) {
+      return parameterMetadata(ImmutableList.copyOf(parameterMetadata));
+    }
+
+    /**
+     * Sets the y-value function.
+     * <p>
+     * The function takes {@code parameters} and x-value, then returns y-value.
      * @param valueFunction  the new value, not null
      * @return this, for chaining, not null
      */
@@ -941,7 +1042,10 @@ public final class FunctionalCurveDefinition
     }
 
     /**
-     * Sets the derivativeFunction.
+     * Sets the derivative function.
+     * <p>
+     * The function takes {@code parameters} and x-value, then returns the first derivative of y-value with respective to x,
+     * i.e., the gradient of the curve.
      * @param derivativeFunction  the new value, not null
      * @return this, for chaining, not null
      */
@@ -952,7 +1056,9 @@ public final class FunctionalCurveDefinition
     }
 
     /**
-     * Sets the sensitivityFunction.
+     * Sets the parameter sensitivity function.
+     * <p>
+     * The function takes {@code parameters} and x-value, then returns the sensitivities of y-value to the parameters.
      * @param sensitivityFunction  the new value, not null
      * @return this, for chaining, not null
      */
@@ -965,14 +1071,15 @@ public final class FunctionalCurveDefinition
     //-----------------------------------------------------------------------
     @Override
     public String toString() {
-      StringBuilder buf = new StringBuilder(320);
-      buf.append("FunctionalCurveDefinition.Builder{");
+      StringBuilder buf = new StringBuilder(352);
+      buf.append("ParameterizedFunctionalCurveDefinition.Builder{");
       buf.append("name").append('=').append(JodaBeanUtils.toString(name)).append(',').append(' ');
       buf.append("xValueType").append('=').append(JodaBeanUtils.toString(xValueType)).append(',').append(' ');
       buf.append("yValueType").append('=').append(JodaBeanUtils.toString(yValueType)).append(',').append(' ');
       buf.append("dayCount").append('=').append(JodaBeanUtils.toString(dayCount)).append(',').append(' ');
       buf.append("nodes").append('=').append(JodaBeanUtils.toString(nodes)).append(',').append(' ');
       buf.append("initialGuess").append('=').append(JodaBeanUtils.toString(initialGuess)).append(',').append(' ');
+      buf.append("parameterMetadata").append('=').append(JodaBeanUtils.toString(parameterMetadata)).append(',').append(' ');
       buf.append("valueFunction").append('=').append(JodaBeanUtils.toString(valueFunction)).append(',').append(' ');
       buf.append("derivativeFunction").append('=').append(JodaBeanUtils.toString(derivativeFunction)).append(',').append(' ');
       buf.append("sensitivityFunction").append('=').append(JodaBeanUtils.toString(sensitivityFunction));

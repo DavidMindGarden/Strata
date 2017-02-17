@@ -41,7 +41,7 @@ import com.opengamma.strata.market.curve.CurveMetadata;
 import com.opengamma.strata.market.curve.CurveName;
 import com.opengamma.strata.market.curve.CurveNode;
 import com.opengamma.strata.market.curve.DefaultCurveMetadata;
-import com.opengamma.strata.market.curve.FunctionalCurveDefinition;
+import com.opengamma.strata.market.curve.ParameterizedFunctionalCurveDefinition;
 import com.opengamma.strata.market.curve.node.FixedIborSwapCurveNode;
 import com.opengamma.strata.market.observable.QuoteId;
 import com.opengamma.strata.math.impl.interpolation.SmithWilsonCurveFunction;
@@ -157,14 +157,14 @@ public class CalibrationDiscountingSmithWilsonTest {
           return SW_CURVE.parameterSensitivity(u, ALPHA, DoubleArray.copyOf(NODE_TIMES));
         }
       };
-  private static final FunctionalCurveDefinition CURVE_DEFN = FunctionalCurveDefinition.builder()
+  private static final ParameterizedFunctionalCurveDefinition CURVE_DEFN = ParameterizedFunctionalCurveDefinition.builder()
       .name(CURVE_NAME)
       .xValueType(ValueType.YEAR_FRACTION)
       .yValueType(ValueType.DISCOUNT_FACTOR)
       .dayCount(CURVE_DC)
+      .initialGuess(DoubleArray.filled(FWD6_NB_NODES, 0d))
       .valueFunction(VALUE_FUNCTION)
       .derivativeFunction(DERIVATIVE_FUNCTION)
-      .initialGuess(DoubleArray.filled(FWD6_NB_NODES, 0d))
       .sensitivityFunction(SENSI_FUNCTION)
       .nodes(ALL_NODES)
       .build();
