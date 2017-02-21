@@ -133,7 +133,7 @@ public class CalibrationDiscountingSmithWilsonTest {
   private static final CurveCalibrator CALIBRATOR = CurveCalibrator.of(1e-9, 1e-9, 100);
 
   /** Test with CurveGroupDefinition */
-  private static final String CURVE_GROUP_NAME_STR = "USD-SINGLE-CURVE";
+  private static final String CURVE_GROUP_NAME_STR = "GBP-SINGLE-CURVE";
   private static final CurveGroupName CURVE_GROUP_NAME = CurveGroupName.of(CURVE_GROUP_NAME_STR);
   private static final SmithWilsonCurveFunction SW_CURVE = SmithWilsonCurveFunction.DEFAULT;
   private static final double ALPHA = 0.186649;
