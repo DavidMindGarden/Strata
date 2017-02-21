@@ -28,6 +28,7 @@ import org.joda.beans.impl.direct.DirectMetaProperty;
 import org.joda.beans.impl.direct.DirectMetaPropertyMap;
 
 import com.opengamma.strata.basics.currency.Currency;
+import com.opengamma.strata.collect.ArgChecker;
 import com.opengamma.strata.collect.array.DoubleArray;
 import com.opengamma.strata.market.param.CurrencyParameterSensitivity;
 import com.opengamma.strata.market.param.ParameterMetadata;
@@ -189,6 +190,8 @@ public final class ParameterizedFunctionalCurve
    * @return the curve with the parameters altered
    */
   public ParameterizedFunctionalCurve withParameters(DoubleArray parameters) {
+    ArgChecker.isTrue(parameters.size() == this.parameters.size(),
+        "the new parameters size must be the same as the initial parameter size");
     return new ParameterizedFunctionalCurve(metadata, parameters, valueFunction, derivativeFunction, sensitivityFunction);
   }
 
