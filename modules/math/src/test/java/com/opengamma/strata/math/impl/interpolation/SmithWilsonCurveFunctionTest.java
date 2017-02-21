@@ -93,8 +93,8 @@ public class SmithWilsonCurveFunctionTest {
     DoubleArray weights = DoubleArray.of(87.2581459896248, -90.049408220743, 16.5225834204242, 20.401521178462, -12.3472386476547,
         5.04900954653571, -1.82365099870708);
     double gapExp = 4.27089481442022E-03 + ONE_BP;
-    double gapCmp = SW_FUNCTION.gap(60d, testAlpha, nodes, weights);
-    System.out.println(gapCmp + "\t" + gapExp);
+    double gapCmp = SmithWilsonCurveFunction.gap(60d, testAlpha, nodes, weights);
+    assertEquals(gapCmp, gapExp, TOL);
   }
 
 }
