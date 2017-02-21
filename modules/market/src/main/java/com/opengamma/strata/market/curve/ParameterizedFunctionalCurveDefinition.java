@@ -9,7 +9,6 @@ import static com.opengamma.strata.collect.Guavate.toImmutableList;
 import static java.time.temporal.ChronoUnit.DAYS;
 import static java.util.stream.Collectors.toCollection;
 
-import java.io.Serializable;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -18,7 +17,6 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
-import java.util.stream.IntStream;
 
 import org.joda.beans.Bean;
 import org.joda.beans.BeanDefinition;
@@ -36,7 +34,6 @@ import org.joda.beans.impl.direct.DirectMetaPropertyMap;
 import com.google.common.collect.ImmutableList;
 import com.opengamma.strata.basics.ReferenceData;
 import com.opengamma.strata.basics.date.DayCount;
-import com.opengamma.strata.collect.Guavate;
 import com.opengamma.strata.collect.Messages;
 import com.opengamma.strata.collect.array.DoubleArray;
 import com.opengamma.strata.collect.tuple.Pair;
@@ -50,10 +47,11 @@ import com.opengamma.strata.market.param.ParameterMetadata;
  * Calibration is based on a list of {@link CurveNode} instances that specify the underlying instruments.
  * <p>
  * The number of the curve parameters is in general different from the number of the instruments.
+ * However, the number mismatch tends to cause the root-finding failure in the curve calibration.
  */
 @BeanDefinition
 public final class ParameterizedFunctionalCurveDefinition
-    implements CurveDefinition, ImmutableBean, Serializable {
+    implements CurveDefinition, ImmutableBean {
 
   /**
    * The curve name.
@@ -97,13 +95,15 @@ public final class ParameterizedFunctionalCurveDefinition
   private final ImmutableList<CurveNode> nodes;
   /**
    * The initial guess values for the curve parameters.
+   * <p>
+   * The size must be the same as the number of the curve parameters. 
    */
   @PropertyDefinition(validate = "notNull")
   private final DoubleArray initialGuess;
   /**
    * The parameter metadata of the curve, defaulted to empty metadata instances.
    * <p>
-   * The size of the list must be the same as the number of the curve parameter.
+   * The size of the list must be the same as the number of the curve parameters.
    */
   @PropertyDefinition(validate = "notNull", builderType = "List<? extends ParameterMetadata>")
   private final ImmutableList<ParameterMetadata> parameterMetadata;
@@ -135,9 +135,7 @@ public final class ParameterizedFunctionalCurveDefinition
   private static void preBuild(Builder builder) {
     if (builder.parameterMetadata.size() == 0) {
       if (builder.initialGuess != null) {
-        builder.parameterMetadata = IntStream.range(0, builder.initialGuess.size())
-            .mapToObj(n -> ParameterMetadata.empty())
-            .collect(Guavate.toImmutableList());
+        builder.parameterMetadata = ParameterMetadata.listOfEmpty(builder.initialGuess.size());
       }
     }
   }
@@ -276,11 +274,6 @@ public final class ParameterizedFunctionalCurveDefinition
   }
 
   /**
-   * The serialization version id.
-   */
-  private static final long serialVersionUID = 1L;
-
-  /**
    * Returns a builder used to create an instance of the bean.
    * @return the builder, not null
    */
@@ -401,6 +394,8 @@ public final class ParameterizedFunctionalCurveDefinition
   //-----------------------------------------------------------------------
   /**
    * Gets the initial guess values for the curve parameters.
+   * <p>
+   * The size must be the same as the number of the curve parameters.
    * @return the value of the property, not null
    */
   public DoubleArray getInitialGuess() {
@@ -411,7 +406,7 @@ public final class ParameterizedFunctionalCurveDefinition
   /**
    * Gets the parameter metadata of the curve, defaulted to empty metadata instances.
    * <p>
-   * The size of the list must be the same as the number of the curve parameter.
+   * The size of the list must be the same as the number of the curve parameters.
    * @return the value of the property, not null
    */
   public ImmutableList<ParameterMetadata> getParameterMetadata() {
@@ -996,6 +991,8 @@ public final class ParameterizedFunctionalCurveDefinition
 
     /**
      * Sets the initial guess values for the curve parameters.
+     * <p>
+     * The size must be the same as the number of the curve parameters.
      * @param initialGuess  the new value, not null
      * @return this, for chaining, not null
      */
@@ -1008,7 +1005,7 @@ public final class ParameterizedFunctionalCurveDefinition
     /**
      * Sets the parameter metadata of the curve, defaulted to empty metadata instances.
      * <p>
-     * The size of the list must be the same as the number of the curve parameter.
+     * The size of the list must be the same as the number of the curve parameters.
      * @param parameterMetadata  the new value, not null
      * @return this, for chaining, not null
      */
